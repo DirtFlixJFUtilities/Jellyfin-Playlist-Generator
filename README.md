@@ -1,17 +1,26 @@
-# Dirtflix Playlist Generator - Technical Documentation
+# Dirtflix Playlist Generator
 
 ## Overview
 
-The Dirtflix Playlist Generator is a standalone web app for building playlists on a Jellyfin media server. Search a term, browse the results grid, click titles into the right-hand "My Playlist" rail, then save the playlist directly on the server via the Jellyfin REST API. Works with Jellyfin 10.x and 12.x. Supports **video playlists** (movies/TV) and **music playlists** (songs staged from album cards) — one kind per playlist. New and improved. All new drastically improved interface and logic, same old unzip and run. Nothing to install.
+The Dirtflix Playlist Generator is a standalone web app for building playlists on a Jellyfin media server. Search a term, browse the results, click titles into the right-hand "My Playlist" rail, then save the playlist directly on the server via the Jellyfin REST API. Works with Jellyfin 10.x and 12.x. Supports **video playlists** (movies/TV) and **music playlists** (songs staged from album cards) — one kind per playlist. New and improved. All new drastically improved interface and logic, same old unzip and run. Nothing to install.
 
 https://github.com/user-attachments/assets/618b42f1-a6b1-435e-a9cf-eb6a4199f76e
 
 <img width="1987" height="1723" alt="new_and_improved" src="https://github.com/user-attachments/assets/3b48fdcb-971a-47eb-b63b-bff4e8521e2f" />
 
-The workflow is a two-pane transfer model:
+The workflow is a two-pane transfer model: **Results** (left) are disposable — re-search freely. The **Playlist rail** (right) is the only list that matters — it accumulates across searches until you save.
 
-- **Results pane** (left) — disposable search results. Re-search freely; results regenerate with every search.
-- **Playlist pane** (right) — the only list that matters. It accumulates items across searches until you save.
+## Features
+
+- 🎬 **Movies & TV playlists** — poster-card search results, library pills, details modal, batch "Add all shown".
+- 🎵 **Music mode** — results sectioned **Artists → Albums → Songs**. Browse artist cards with album counts and drill into discographies; add a whole album at once (tracks staged in album order) or cherry-pick individual songs from lazy-loaded tracklists or the Songs section.
+- 🔎 **One search does all the thinking** — type an artist, album, or song name and the right section surfaces it. Searches stay pinned to your Music libraries so nothing unrelated leaks in.
+- 🎛️ **Refine as you go** — years, minimum rating (video), genres, studios, and artists, each narrowing the last search instantly.
+- 🧭 **Guided tour** — "Show Me" walks new users through connect → search → add → save.
+- 🌗 **Light & dark themes**, fully responsive from phone to desktop, and an opt-in "Remember login".
+- 📦 **Zero install** — three files, open `index.html` and go. No backend, no build step, no dependencies to manage.
+
+---
 
 ## Project Structure
 
@@ -62,7 +71,7 @@ When an owner user is selected, `UserId="{USER_ID}"` is appended to the header a
 ### Data Flow
 1. Enter server URL + API key → users, genres/studios, and library folders load automatically; pick the playlist **Owner**.
 2. Toggle Movies / TV chips, or switch to the exclusive **Music** chip → genre and studio/artist lists reload for the active mode. Switching Music ↔ Videos clears a non-empty playlist after a confirm.
-3. Search (Enter or Search button) → video: `GET /Items` with `SearchTerm`, type, and Refine parameters (max 1000 results), then `enrichLibraries()` batch-resolves parent chains for library pills. Music: the three-query album union (see Music Mode).
+3. Search (Enter or Search button) → video: `GET /Items` with `SearchTerm`, type, and Refine parameters (max 1000 results), then `enrichLibraries()` batch-resolves parent chains for library pills. Music: three parallel section queries (Artists/Albums/Songs, see Music Mode).
 4. Click `+` on a result card to add it to the playlist (`✓` once added); `ℹ` opens a details modal. "Add all shown" batch-adds the current results (video mode only).
 5. Arrange the playlist with ↑/↓, sort dropdown, or remove with ✕.
 6. Save → `POST /Playlists` with `Name`, `UserId`, `Users:[{UserId, CanEdit}]` (CanEdit is currently always true), `IsPublic`, `MediaType` (derived from mode: `video` or `audio`), and `Ids` (first 1000 GUIDs in creation order). Any overflow is appended via `POST /Playlists/{id}/Items` in 1000-item batches.
@@ -148,7 +157,7 @@ The "Remember login" checkbox (opt-in, off by default) stores `{serverUrl, apiKe
 ## Known Limitations
 
 1. **Playlist not persisted** — filter state and staged items are lost on refresh (deliberate). Theme and opt-in login (URL, key, owner in `localStorage` under `dirtflix.connection`) survive; untick "Remember login" to erase them.
-2. **1000-result cap** per search query; music search runs three queries that merge (the song-match route resolves up to 300 parent albums). Narrow with Refine or shorter terms for larger libraries.
+2. **1000-result cap** per query; music search runs one query per section (artists/albums/songs), each capped. Narrow with Refine or shorter terms for larger libraries.
 3. **One kind per playlist** — videos or songs, never mixed (a Jellyfin playlist constraint; the app enforces it via the exclusive Music chip).
 4. **Description field absent** — Jellyfin's `POST /Playlists` accepts no description, so the UI no longer offers one.
 5. **Any-match genre semantics** — Jellyfin's `Genres` filter matches items with *any* selected genre, not all.
