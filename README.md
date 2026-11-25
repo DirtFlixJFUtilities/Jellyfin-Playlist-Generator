@@ -6,8 +6,6 @@ The Dirtflix Playlist Generator is a standalone web app for building playlists o
 
 https://github.com/user-attachments/assets/618b42f1-a6b1-435e-a9cf-eb6a4199f76e
 
-<img width="1987" height="1723" alt="new_and_improved" src="https://github.com/user-attachments/assets/3b48fdcb-971a-47eb-b63b-bff4e8521e2f" />
-
 The workflow is a two-pane transfer model: **Results** (left) are disposable — re-search freely. The **Playlist rail** (right) is the only list that matters — it accumulates across searches until you save.
 
 ## Features
@@ -19,6 +17,12 @@ The workflow is a two-pane transfer model: **Results** (left) are disposable —
 - 🧭 **Guided tour** — "Show Me" walks new users through connect → search → add → save.
 - 🌗 **Light & dark themes**, fully responsive from phone to desktop, and an opt-in "Remember login".
 - 📦 **Zero install** — three files, open `index.html` and go. No backend, no build step, no dependencies to manage.
+
+<img width="1987" height="1723" alt="new_and_improved" src="https://github.com/user-attachments/assets/3b48fdcb-971a-47eb-b63b-bff4e8521e2f" />
+
+V2.1 support for music playlists
+
+<img width="1770" height="2494" alt="music_playlists" src="https://github.com/user-attachments/assets/f651cedd-de8f-49fa-8c09-1818dad284ee" />
 
 ---
 
