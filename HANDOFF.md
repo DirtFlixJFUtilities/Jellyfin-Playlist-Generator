@@ -10,7 +10,7 @@ Standalone static web app (open `index.html` directly) that searches a Jellyfin 
 
 - **v2.0 published and complete. v2.1 music playlist support: BUILT and browser-tested by the user against .200** (searches, album cards, drill-in, songs section, filters — all confirmed working). Changes are committed to `main`; the zip/release for v2.1 are NOT yet made.
 - **App works against both Jellyfin servers on the LAN**: `192.168.1.200:8096` (DirtFlix 2.0, **12.4.0** — the one in use, has a Music library) and `192.168.1.10:8096` (DS923-NAS, 10.10.7, not probed for music).
-- **Git**: local `main` = `99f4dd9` + `4106146` (v2.1 music work incl. README merge of the user's GitHub web edits) + `3cf57f9` (playlist art fallback) — **NOT pushed** (user paused publishing 2026-11-25). The remote diverged: GitHub gained two web-UI "Update README.md" commits (`7b14776`, `54d10d5`) adding the "New and improved…" sentence in Overview plus `user-attachments` screenshot/video links — the local README already contains all of that, so a future `git rebase origin/main` conflict resolves by taking the local README (`--theirs` during rebase). Committer identity is set **locally only**.
+- **Git**: `main` pushed to `https://github.com/DirtFlixJFUtilities/Jellyfin-Playlist-Generator` (normal fast-forward, no force) — local README already contained the user's GitHub web-UI copy + attachment links, merged via merge-commit `6c5d3d8`. Folder mirrors remote including `music_playlists.jpg` and `dirtflixplaylist_v2_1.zip` (v2.1 release artifact, zipped by user 2026-11-25). Committer identity is set **locally only**.
 
 ## Probe findings (2026-11-25, against .200 / 12.4.0)
 
@@ -55,7 +55,7 @@ Standalone static web app (open `index.html` directly) that searches a Jellyfin 
 
 ## Suggested next steps (not started)
 
-- **Cut the v2.1 release**: build `dirtflixplaylist21.zip` from current files (must include favicon.svg/png and music mode), tag/push, publish GitHub Release with the zip — same flow as v2.0.
+- **Publish the v2.1 GitHub Release**: zip is built (`dirtflixplaylist_v2_1.zip`, in folder and pushed) — tag `v2.1` and attach the zip on the Releases page (same flow as v2.0). Note: the zip intentionally excludes `new_and_improved.mp4`, so the showcase video won't play in the unzipped copy — the page degrades gracefully.
 - Optional: GitHub Pages so the tool is reachable from any browser without the folder.
 - Optional: drag-and-drop reorder in the playlist rail (currently ↑/↓ buttons).
 - Optional: playlist export (`.m3u`) without touching the server.
