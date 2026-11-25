@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DirtFlix Playlist Generator</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="alternate icon" type="image/png" href="favicon.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
@@ -100,7 +102,7 @@
                         <input type="number" class="form-control" id="yearTo" placeholder="2030" min="1900">
                     </div>
                 </div>
-                <div class="refine-block">
+                <div class="refine-block video-only">
                     <label class="form-label" for="ratingFilter">Min community rating: <span id="ratingValue">0</span></label>
                     <input type="range" class="form-range" id="ratingFilter" min="0" max="10" step="0.5" value="0">
                 </div>
@@ -109,10 +111,15 @@
                     <input type="text" class="form-control form-control-sm mb-2" id="genreSearch" placeholder="Type to filter genres...">
                     <div class="check-list" id="genreList"></div>
                 </div>
-                <div class="refine-block">
+                <div class="refine-block video-only">
                     <label class="form-label">Studios</label>
                     <input type="text" class="form-control form-control-sm mb-2" id="studioSearch" placeholder="Type to filter studios...">
                     <div class="check-list" id="studioList"></div>
+                </div>
+                <div class="refine-block music-only">
+                    <label class="form-label">Artists</label>
+                    <input type="text" class="form-control form-control-sm mb-2" id="artistSearch" placeholder="Type to filter artists...">
+                    <div class="check-list" id="artistList"></div>
                 </div>
             </div>
         </div>
@@ -146,6 +153,7 @@
                             <option value="none">Manual order</option>
                             <option value="alphabetical">A-Z</option>
                             <option value="alphabeticalDesc">Z-A</option>
+                            <option value="album" id="sortAlbumOption" hidden>By album</option>
                             <option value="releaseDate">Newest first</option>
                             <option value="oldest">Oldest first</option>
                             <option value="rating">Top rated</option>
@@ -164,9 +172,7 @@
                             <input class="form-check-input" type="checkbox" id="isPublicCheckbox" checked>
                             <label class="form-check-label" for="isPublicCheckbox">Public</label>
                         </div>
-                        <select class="form-select form-select-sm" id="mediaTypeSelect" style="max-width: 120px;">
-                            <option value="Video">Video</option>
-                        </select>
+                        <span class="kind-badge" id="playlistKindBadge"><i class="fas fa-film me-1"></i>Videos</span>
                     </div>
                     <button type="button" class="btn btn-info w-100" id="savePlaylistBtn" disabled>
                         <i class="fas fa-save me-2"></i>Save Playlist to Jellyfin
@@ -241,7 +247,7 @@
                 <div class="modal-body">
                     <ol class="help-steps">
                         <li><strong>Connect.</strong> Enter your Jellyfin server URL and an API key (Dashboard → API Keys). Users load automatically; pick the playlist <em>Owner</em>. Tick <em>Remember login</em> to keep the URL, key, and owner in this browser (untick to forget).</li>
-                        <li><strong>Pick media types</strong> with the Movies / TV / Music chips.</li>
+                        <li><strong>Pick media types</strong> with the Movies / TV / Music chips. Music is its own mode: it shows <em>albums</em> with their tracklists, so you can stage whole albums or individual songs. Switching between Music and Videos clears the playlist (a playlist can only hold one kind).</li>
                         <li><strong>Search</strong> any term and press Enter — matching titles appear in the Results pane. Use <em>Refine</em> to narrow by year, rating, genre or studio.</li>
                         <li><strong>Add to the playlist</strong> by clicking <i class="fas fa-plus"></i> on a card (it becomes <i class="fas fa-check"></i>). Hover <i class="fas fa-circle-info"></i> to see details. Results are disposable — keep searching and adding; the playlist on the right accumulates.</li>
                         <li><strong>Arrange</strong> the playlist rows with ↑ ↓, or sort/reorder them, and remove with ✕.</li>

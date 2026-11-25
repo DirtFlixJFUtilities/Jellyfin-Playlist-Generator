@@ -2,18 +2,32 @@
 // API layer targets Jellyfin 10.x and 12.x (Authorization header, POST /Playlists).
 
 let results = [];
+let musicAlbums = [];
+let musicSongs = [];
+let musicArtistHits = [];
+let drillArtist = null;
+const artistAlbums = {};
+const artistCounts = new Map();
+const collapsedSections = new Set();
+let sectionLimits = { artists: 24, albums: 100, songs: 150 };
 let playlist = [];
 let genres = [];
 let studios = [];
+let artists = [];
 let userId = '';
 let genresLoaded = false;
 let studiosLoaded = false;
+let artistsLoaded = false;
 let hasSearched = false;
 let searchTimer = null;
 let libraryNames = {};
+let musicFolderIds = [];
 
 const activeGenres = new Set();
 const activeStudios = new Set();
+const activeArtists = new Set();
+const albumTracks = {};
+let tracklistObserver = null;
 
 // DOM elements
 const serverUrlInput = document.getElementById('serverUrl');
@@ -28,6 +42,8 @@ const genreSearch = document.getElementById('genreSearch');
 const genreList = document.getElementById('genreList');
 const studioSearch = document.getElementById('studioSearch');
 const studioList = document.getElementById('studioList');
+const artistSearch = document.getElementById('artistSearch');
+const artistList = document.getElementById('artistList');
 const yearFrom = document.getElementById('yearFrom');
 const yearTo = document.getElementById('yearTo');
 const ratingFilter = document.getElementById('ratingFilter');
@@ -42,7 +58,8 @@ const clearPlaylistBtn = document.getElementById('clearPlaylistBtn');
 const playlistContainer = document.getElementById('playlistContainer');
 const playlistName = document.getElementById('playlistName');
 const isPublicCheckbox = document.getElementById('isPublicCheckbox');
-const mediaTypeSelect = document.getElementById('mediaTypeSelect');
+const playlistKindBadge = document.getElementById('playlistKindBadge');
+const sortAlbumOption = document.getElementById('sortAlbumOption');
 const savePlaylistBtn = document.getElementById('savePlaylistBtn');
 const statusMessages = document.getElementById('statusMessages');
 const tabResultsBtn = document.getElementById('tabResultsBtn');
@@ -56,6 +73,7 @@ const tourPrevBtn = document.getElementById('tourPrev');
 const tourNextBtn = document.getElementById('tourNext');
 const tourSkipBtn = document.getElementById('tourSkip');
 const chips = Array.from(document.querySelectorAll('.chip'));
+const chipMusic = document.getElementById('chipMusic');
 
 const CONN_KEY = 'dirtflix.connection';
 
@@ -94,6 +112,27 @@ function connectionReady() {
     return serverUrlInput.value.trim() && apiKeyInput.value.trim();
 }
 
+// ---------- Modes (Video / Music) ----------
+function isMusicMode() {
+    return chipMusic.classList.contains('active');
+}
+
+function onModeChanged() {
+    const music = isMusicMode();
+    document.body.dataset.mode = music ? 'music' : 'video';
+    addAllBtn.hidden = music;
+    sortAlbumOption.hidden = !music;
+    if (!music && playlistSort.value === 'album') playlistSort.value = 'none';
+    updateKindBadge();
+    updateRefineBadge();
+}
+
+function updateKindBadge() {
+    playlistKindBadge.innerHTML = isMusicMode()
+        ? '<i class="fas fa-compact-disc me-1"></i>Music'
+        : '<i class="fas fa-film me-1"></i>Videos';
+}
+
 // Theme toggle
 function applyTheme(theme) {
     const body = document.body;
@@ -124,6 +163,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     updateNarrowMode();
     setActivePane('results');
+    onModeChanged();
     window.addEventListener('resize', updateNarrowMode);
 
     tabResultsBtn.addEventListener('click', () => setActivePane('results'));
@@ -144,8 +184,7 @@ document.addEventListener('DOMContentLoaded', function () {
         saveConnection();
         if (connectionReady()) {
             fetchUsers();
-            loadGenresAndStudios();
-            loadLibraries();
+            loadLibraries().then(() => loadGenresAndStudios());
         }
     }
     serverUrlInput.addEventListener('change', onConnectionChange);
@@ -174,11 +213,36 @@ document.addEventListener('DOMContentLoaded', function () {
         if (e.key === 'Enter') runSearch();
     });
 
-    // Type chips
+    // Type chips — Music is an exclusive mode, hard-separated from video
     chips.forEach(chip => {
         chip.addEventListener('click', () => {
-            chip.classList.toggle('active');
-            if (genresLoaded) loadGenresAndStudios(true);
+            const isMusicChip = chip === chipMusic;
+            const wasActive = chip.classList.contains('active');
+            const oldMusic = isMusicMode();
+
+            let keep;
+            if (isMusicChip) {
+                if (wasActive) return; // nothing else is active to fall back to
+                keep = [chip];
+            } else if (wasActive) {
+                keep = chips.filter(c => c !== chip && c !== chipMusic && c.classList.contains('active'));
+                if (keep.length === 0) return; // keep at least one video chip
+            } else {
+                keep = chips.filter(c => c.classList.contains('active') && c !== chipMusic);
+                keep.push(chip);
+            }
+
+            if (isMusicChip !== oldMusic && playlist.length > 0) {
+                const from = oldMusic ? 'songs' : 'videos';
+                const to = isMusicChip ? 'music mode' : 'video mode';
+                if (!confirm(`Your playlist holds ${playlist.length} ${from}. Switching to ${to} will clear it — save it first, or press Cancel to stay.`)) return;
+                playlist = [];
+                renderPlaylist();
+            }
+
+            chips.forEach(c => c.classList.toggle('active', keep.includes(c)));
+            onModeChanged();
+            if (connectionReady()) loadGenresAndStudios(true);
             if (hasSearched) scheduleSearch();
         });
     });
@@ -204,9 +268,66 @@ document.addEventListener('DOMContentLoaded', function () {
 
     genreSearch.addEventListener('input', () => filterCheckList(genreList, genreSearch.value));
     studioSearch.addEventListener('input', () => filterCheckList(studioList, studioSearch.value));
+    artistSearch.addEventListener('input', () => filterCheckList(artistList, artistSearch.value));
 
     // Results delegation: add/remove + details
-    resultsContainer.addEventListener('click', e => {
+    resultsContainer.addEventListener('click', async e => {
+        const collapseBtn = e.target.closest('.section-toggle');
+        if (collapseBtn) {
+            const key = collapseBtn.dataset.section;
+            if (collapsedSections.has(key)) collapsedSections.delete(key);
+            else collapsedSections.add(key);
+            renderMusicResults();
+            return;
+        }
+        const drillBtn = e.target.closest('.artist-show-albums');
+        if (drillBtn) {
+            const artistId = drillBtn.dataset.artist;
+            if (drillArtist && drillArtist.id === artistId) {
+                drillArtist = null;
+            } else {
+                if (!artistAlbums[artistId]) {
+                    artistAlbums[artistId] = (await fetchScopedItems(() => {
+                        const params = albumParams();
+                        params.append('ArtistIds', artistId);
+                        return params;
+                    }))
+                        .filter(albumPassesFilters)
+                        .sort((a, b) => (a.Name || '').localeCompare(b.Name || ''));
+                }
+                drillArtist = { id: artistId, name: drillBtn.dataset.name };
+            }
+            renderMusicResults();
+            return;
+        }
+        if (e.target.closest('.drill-back')) {
+            drillArtist = null;
+            renderMusicResults();
+            return;
+        }
+        const moreBtn = e.target.closest('.show-more');
+        if (moreBtn) {
+            sectionLimits[moreBtn.dataset.more] += 200;
+            renderMusicResults();
+            return;
+        }
+        const songRow = e.target.closest('.song-row');
+        if (songRow) {
+            const song = musicSongs.find(t => t.Id === songRow.dataset.id);
+            if (song) togglePlaylist(song);
+            return;
+        }
+        const albumBtn = e.target.closest('.add-album-btn');
+        if (albumBtn) {
+            toggleAlbumTracks(albumBtn.dataset.album);
+            return;
+        }
+        const trackRow = e.target.closest('.tr-row');
+        if (trackRow) {
+            const track = (albumTracks[trackRow.dataset.album] || []).find(t => t.Id === trackRow.dataset.id);
+            if (track) togglePlaylist(track);
+            return;
+        }
         const card = e.target.closest('.item-card');
         if (!card) return;
         const item = results.find(it => it.Id === card.dataset.id);
@@ -217,6 +338,18 @@ document.addEventListener('DOMContentLoaded', function () {
             togglePlaylist(item);
         }
     });
+
+    // Artist/song images 404 when no image exists — swap in a placeholder
+    resultsContainer.addEventListener('error', e => {
+        if (e.target.matches && e.target.matches('.artist-photo, .song-thumb')) {
+            const placeholder = document.createElement('div');
+            placeholder.className = `${e.target.className} item-placeholder`;
+            placeholder.innerHTML = e.target.matches('.artist-photo')
+                ? '<i class="fas fa-microphone fa-2x"></i>'
+                : '<i class="fas fa-music"></i>';
+            e.target.replaceWith(placeholder);
+        }
+    }, true);
 
     addAllBtn.addEventListener('click', () => {
         let added = 0;
@@ -282,8 +415,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     if (connectionReady()) {
         fetchUsers();
-        loadGenresAndStudios();
-        loadLibraries();
+        loadLibraries().then(() => loadGenresAndStudios());
     }
 
     renderPlaylist();
@@ -310,6 +442,9 @@ async function loadLibraries() {
         const data = await response.json();
         libraryNames = {};
         (data.Items || []).forEach(folder => { libraryNames[folder.Id] = folder.Name; });
+        musicFolderIds = (data.Items || [])
+            .filter(f => f.CollectionType === 'music')
+            .map(f => f.Id);
     } catch (error) {
         console.error('Error loading libraries:', error);
     }
@@ -413,17 +548,23 @@ function selectedTypes() {
 }
 
 async function fetchGenresForTypes(itemTypes) {
-    const params = new URLSearchParams();
-    params.append('IncludeItemTypes', itemTypes.join(','));
-    params.append('Recursive', 'true');
+    const musicOnly = itemTypes.every(t => t === 'Audio');
+    const folders = musicOnly ? musicFolders() : [''];
+    const names = [];
+    for (const folder of folders) {
+        const params = new URLSearchParams();
+        params.append('IncludeItemTypes', itemTypes.join(','));
+        params.append('Recursive', 'true');
+        if (folder) params.append('ParentId', folder);
 
-    const response = await fetch(`${serverUrlInput.value.trim()}/Genres?${params}`, {
-        headers: { 'Authorization': authHeader(), 'Accept': 'application/json' }
-    });
-    if (!response.ok) throw new Error(`HTTP error fetching genres! status: ${response.status}`);
+        const response = await fetch(`${serverUrlInput.value.trim()}/Genres?${params}`, {
+            headers: { 'Authorization': authHeader(), 'Accept': 'application/json' }
+        });
+        if (!response.ok) throw new Error(`HTTP error fetching genres! status: ${response.status}`);
 
-    const data = await response.json();
-    let names = data.Items ? data.Items.map(i => i.Name) : [];
+        const data = await response.json();
+        (data.Items || []).forEach(i => { if (i.Name && !names.includes(i.Name)) names.push(i.Name); });
+    }
 
     // Drop junk genres: not title-case, code-looking names, ISBNs, heavy punctuation
     return names.filter(name => {
@@ -489,26 +630,56 @@ async function fetchStudiosForTypes(itemTypes) {
     }
 }
 
+async function fetchArtists() {
+    const names = [];
+    for (const folder of musicFolders()) {
+        const params = new URLSearchParams();
+        params.append('Limit', '3000');
+        if (folder) params.append('ParentId', folder);
+
+        const response = await fetch(`${serverUrlInput.value.trim()}/Artists?${params}`, {
+            headers: { 'Authorization': authHeader(), 'Accept': 'application/json' }
+        });
+        if (!response.ok) throw new Error(`HTTP error fetching artists! status: ${response.status}`);
+
+        const data = await response.json();
+        (data.Items || []).forEach(i => { const n = i.Name; if (n && !n.includes('\ufffd') && !names.includes(n)) names.push(n); });
+    }
+    return names;
+}
+
 async function loadGenresAndStudios(force = false) {
-    if ((genresLoaded && studiosLoaded && !force) || !connectionReady()) return;
+    if (!connectionReady()) return;
+    const music = isMusicMode();
+    const needGenres = force || !genresLoaded;
+    const needList = music ? (force || !artistsLoaded) : (force || !studiosLoaded);
+    if (!needGenres && !needList) return;
 
     const itemTypes = selectedTypes();
     if (itemTypes.length === 0) return;
 
     try {
-        genres = await fetchGenresForTypes(itemTypes);
-        genresLoaded = true;
-        studios = await fetchStudiosForTypes(itemTypes);
-        studiosLoaded = true;
+        if (needGenres) {
+            genres = await fetchGenresForTypes(itemTypes);
+            genresLoaded = true;
+        }
 
-        activeGenres.forEach(g => { if (!genres.includes(g)) activeGenres.delete(g); });
-        activeStudios.forEach(s => { if (!studios.includes(s)) activeStudios.delete(s); });
+        if (music) {
+            artists = await fetchArtists();
+            artistsLoaded = true;
+            activeArtists.forEach(a => { if (!artists.includes(a)) activeArtists.delete(a); });
+            buildCheckList(artistList, artists, activeArtists, () => { if (hasSearched) scheduleSearch(); });
+        } else {
+            studios = await fetchStudiosForTypes(itemTypes);
+            studiosLoaded = true;
+            activeStudios.forEach(s => { if (!studios.includes(s)) activeStudios.delete(s); });
+            buildCheckList(studioList, studios, activeStudios, () => { if (hasSearched) scheduleSearch(); });
+        }
 
         buildCheckList(genreList, genres, activeGenres, () => { if (hasSearched) scheduleSearch(); });
-        buildCheckList(studioList, studios, activeStudios, () => { if (hasSearched) scheduleSearch(); });
         updateRefineBadge();
     } catch (error) {
-        console.error('Error loading genres and studios:', error);
+        console.error('Error loading genres and filter lists:', error);
         showStatusMessage(`Could not load genres/studios: ${error.message}`, 'warning');
     }
 }
@@ -543,7 +714,7 @@ function filterCheckList(container, term) {
 }
 
 function updateRefineBadge() {
-    const n = activeGenres.size + activeStudios.size;
+    const n = activeGenres.size + (isMusicMode() ? activeArtists.size : activeStudios.size);
     refineBadge.hidden = n === 0;
     refineBadge.textContent = n;
 }
@@ -565,6 +736,11 @@ async function runSearch() {
     searchBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
 
     try {
+        if (isMusicMode()) {
+            await runMusicSearch(searchInput.value.trim());
+            return;
+        }
+
         const params = new URLSearchParams();
         params.append('IncludeItemTypes', itemTypes.join(','));
         params.append('Recursive', 'true');
@@ -606,6 +782,141 @@ async function runSearch() {
     }
 }
 
+// ---------- Music search ----------
+async function fetchItemsJson(params) {
+    const response = await fetch(`${serverUrlInput.value.trim()}/Items?${params}`, {
+        headers: { 'Authorization': authHeader(), 'Accept': 'application/json' }
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    return (await response.json()).Items || [];
+}
+
+// Music libraries are the only scope for music mode — otherwise stray Audio
+// items (orphans, theme-song files in TV libraries, audiobooks) leak into
+// searches and the genre filter with video genres. Singular ParentId is a
+// real filter on /Items, /Genres and /Artists (ParentIds is not).
+function musicFolders() {
+    return musicFolderIds.length ? musicFolderIds : [''];
+}
+
+async function fetchScopedItems(buildParams) {
+    const folders = musicFolders();
+    if (folders.length === 1) {
+        const p = buildParams();
+        if (folders[0]) p.append('ParentId', folders[0]);
+        return fetchItemsJson(p);
+    }
+    const seen = new Map();
+    for (const folder of folders) {
+        const p = buildParams();
+        p.append('ParentId', folder);
+        (await fetchItemsJson(p)).forEach(i => seen.set(i.Id, i));
+    }
+    return Array.from(seen.values());
+}
+
+function albumParams() {
+    const p = new URLSearchParams();
+    p.append('IncludeItemTypes', 'MusicAlbum');
+    p.append('Recursive', 'true');
+    p.append('EnableImageTypes', 'Primary');
+    p.append('Limit', '1000');
+    p.append('Fields', 'Overview,CommunityRating,ProductionYear,Genres,ImageTags,Name,Type,ParentId,AlbumArtist,Artists');
+    if (userId) p.append('UserId', userId);
+    return p;
+}
+
+function albumPassesFilters(a) {
+    if (activeGenres.size && !(a.Genres || []).some(g => activeGenres.has(g))) return false;
+    if (activeArtists.size) {
+        const albumArtistNames = Array.isArray(a.AlbumArtist) ? a.AlbumArtist : (a.AlbumArtist ? [a.AlbumArtist] : []);
+        const names = (a.Artists || []).concat(albumArtistNames);
+        if (!names.some(n => activeArtists.has(n))) return false;
+    }
+    const yFrom = parseInt(yearFrom.value);
+    const yTo = parseInt(yearTo.value);
+    const y = a.ProductionYear;
+    if (!isNaN(yFrom) && y && y < yFrom) return false;
+    if (!isNaN(yTo) && y && y > yTo) return false;
+    return true;
+}
+
+// Sectioned music search: Artists > Albums > Songs. Each section is fed by
+// one query; songs whose album is already displayed are dropped so the
+// Songs section stays complementary. Artist-matched albums are not dumped
+// into Albums — they load on artist-card drill-in.
+async function runMusicSearch(term) {
+    drillArtist = null;
+
+    musicAlbums = (await fetchScopedItems(() => {
+        const p = albumParams();
+        if (term) p.append('SearchTerm', term);
+        else p.append('SortBy', 'SortName');
+        return p;
+    }))
+        .filter(albumPassesFilters)
+        .sort((a, b) => (a.Name || '').localeCompare(b.Name || ''));
+
+    musicArtistHits = [];
+    musicSongs = [];
+
+    if (term) {
+        try {
+            const seen = new Map();
+            for (const folder of musicFolders()) {
+                const artistParams = new URLSearchParams();
+                artistParams.append('SearchTerm', term);
+                artistParams.append('Limit', '50');
+                if (userId) artistParams.append('UserId', userId);
+                if (folder) artistParams.append('ParentId', folder);
+                const artistResponse = await fetch(`${serverUrlInput.value.trim()}/Artists?${artistParams}`, {
+                    headers: { 'Authorization': authHeader(), 'Accept': 'application/json' }
+                });
+                if (artistResponse.ok) {
+                    ((await artistResponse.json()).Items || []).forEach(a => seen.set(a.Id, a));
+                }
+            }
+            musicArtistHits = Array.from(seen.values())
+                .sort((a, b) => (a.Name || '').localeCompare(b.Name || ''));
+        } catch (error) {
+            console.error('Error searching artists:', error);
+        }
+
+        const shownAlbumIds = new Set(musicAlbums.map(a => a.Id));
+        musicSongs = (await fetchScopedItems(() => {
+            const p = new URLSearchParams();
+            p.append('IncludeItemTypes', 'Audio');
+            p.append('Recursive', 'true');
+            p.append('Limit', '1000');
+            p.append('Fields', 'Name,ParentId,Album,Artists,RunTimeTicks,ProductionYear,Genres');
+            p.append('SearchTerm', term);
+            if (userId) p.append('UserId', userId);
+            return p;
+        }))
+            .filter(t => !shownAlbumIds.has(t.ParentId) && songPassesFilters(t))
+            .sort((a, b) => (a.Name || '').localeCompare(b.Name || ''));
+    }
+
+    hasSearched = true;
+    renderResults();
+}
+
+function songPassesFilters(t) {
+    if (activeGenres.size && !(t.Genres || []).some(g => activeGenres.has(g))) return false;
+    if (activeArtists.size && !(t.Artists || []).some(n => activeArtists.has(n))) return false;
+    const yFrom = parseInt(yearFrom.value);
+    const yTo = parseInt(yearTo.value);
+    const y = t.ProductionYear;
+    if (!isNaN(yFrom) && y && y < yFrom) return false;
+    if (!isNaN(yTo) && y && y > yTo) return false;
+    return true;
+}
+
+function displayedAlbums() {
+    if (drillArtist) return artistAlbums[drillArtist.id] || [];
+    return musicAlbums;
+}
+
 function typeLabel(item) {
     if (item.Type === 'Movie') return 'Movie';
     if (item.Type === 'Series' || item.Type === 'TvProgram') return 'TV Series';
@@ -613,6 +924,11 @@ function typeLabel(item) {
 }
 
 function renderResults() {
+    if (isMusicMode()) {
+        renderMusicResults();
+        return;
+    }
+
     if (results.length === 0) {
         resultsCount.textContent = 'No matches';
         addAllBtn.disabled = true;
@@ -628,6 +944,293 @@ function renderResults() {
     addAllBtn.disabled = false;
     resultsCount.textContent = `${results.length} match${results.length === 1 ? '' : 'es'}`;
     resultsContainer.innerHTML = results.map(cardHtml).join('');
+}
+
+function renderMusicResults() {
+    const albums = displayedAlbums();
+    if (musicArtistHits.length === 0 && albums.length === 0 && musicSongs.length === 0) {
+        resultsCount.textContent = 'No matches';
+        resultsContainer.innerHTML = `
+            <div class="text-center py-5 text-muted">
+                <i class="fas fa-inbox fa-3x mb-3"></i>
+                <p>No artists, albums, or songs matched that search</p>
+                <p>Try fewer refinements or a shorter term</p>
+            </div>`;
+        return;
+    }
+
+    const summary = [];
+    if (musicArtistHits.length) summary.push(`${musicArtistHits.length} artist${musicArtistHits.length === 1 ? '' : 's'}`);
+    if (musicAlbums.length) summary.push(`${musicAlbums.length} album${musicAlbums.length === 1 ? '' : 's'}`);
+    if (musicSongs.length) summary.push(`${musicSongs.length} song${musicSongs.length === 1 ? '' : 's'}`);
+    resultsCount.textContent = summary.join(' · ');
+
+    const toggleBtn = key => {
+        const collapsed = collapsedSections.has(key);
+        return `<button type="button" class="section-toggle" data-section="${key}" title="${collapsed ? 'Show' : 'Hide'}">
+                    <i class="fas ${collapsed ? 'fa-chevron-down' : 'fa-chevron-up'}"></i>
+                </button>`;
+    };
+    const sectionShell = (key, head, body) => {
+        const collapsed = collapsedSections.has(key);
+        return `
+            <section class="music-section">
+                ${head}
+                <div class="section-body"${collapsed ? ' hidden' : ''}>${body}</div>
+            </section>`;
+    };
+
+    let html = '';
+
+    if (musicArtistHits.length) {
+        html += sectionShell('artists',
+            `<h4 class="section-head"><i class="fas fa-microphone me-2"></i>Artists <span class="section-count">${musicArtistHits.length}</span>${toggleBtn('artists')}</h4>`,
+            `<div class="artist-row">${musicArtistHits.slice(0, sectionLimits.artists).map(artistCardHtml).join('')}</div>
+             ${showMoreButton('artists', musicArtistHits.length, sectionLimits.artists)}`);
+    }
+
+    const albumsHeader = drillArtist
+        ? `<h4 class="section-head"><i class="fas fa-compact-disc me-2"></i>Albums by ${esc(drillArtist.name)} <span class="section-count">${albums.length}</span>
+               <button type="button" class="btn btn-sm btn-link drill-back" title="Back to albums matching the search term"><i class="fas fa-arrow-left me-1"></i>Back to name matches</button>${toggleBtn('albums')}</h4>`
+        : `<h4 class="section-head"><i class="fas fa-compact-disc me-2"></i>Albums <span class="section-count">${albums.length}</span>${toggleBtn('albums')}</h4>`;
+    html += sectionShell('albums',
+        albumsHeader,
+        `<div class="album-grid">${albums.slice(0, sectionLimits.albums).map(albumCardHtml).join('')}</div>
+         ${showMoreButton('albums', albums.length, sectionLimits.albums)}`);
+
+    if (musicSongs.length) {
+        html += sectionShell('songs',
+            `<h4 class="section-head"><i class="fas fa-music me-2"></i>Songs <span class="section-count">${musicSongs.length}</span>${toggleBtn('songs')}</h4>`,
+            `<div class="song-list">${musicSongs.slice(0, sectionLimits.songs).map(songRowHtml).join('')}</div>
+             ${showMoreButton('songs', musicSongs.length, sectionLimits.songs)}`);
+    }
+
+    resultsContainer.innerHTML = html;
+    observeTracklists();
+    fillArtistCounts();
+}
+
+function showMoreButton(key, total, shown) {
+    if (total <= shown) return '';
+    return `<button type="button" class="btn btn-sm btn-outline-secondary show-more" data-more="${key}">Show more (${total - shown} remaining)</button>`;
+}
+
+function artistCardHtml(artist) {
+    const drilled = drillArtist && drillArtist.id === artist.Id;
+    const cached = artistCounts.get(artist.Id);
+    return `
+        <div class="artist-card ${drilled ? 'drilled' : ''}" data-artist="${artist.Id}">
+            <img src="${serverUrlInput.value.trim()}/Items/${artist.Id}/Images/Primary?width=200" alt="${esc(artist.Name)}" class="artist-photo" loading="lazy">
+            <div class="artist-name" title="${esc(artist.Name)}">${esc(artist.Name)}</div>
+            <div class="artist-count" data-count-for="${artist.Id}">${cached != null ? `${cached} album${cached === 1 ? '' : 's'}` : ''}</div>
+            <button type="button" class="btn btn-sm artist-show-albums" data-artist="${artist.Id}" data-name="${esc(artist.Name)}">
+                ${drilled
+                    ? '<i class="fas fa-arrow-left me-1"></i>Name matches'
+                    : '<i class="fas fa-compact-disc me-1"></i>Show albums'}
+            </button>
+        </div>`;
+}
+
+function songRowHtml(song) {
+    const inList = playlist.some(p => p.Id === song.Id);
+    const meta = [(song.Artists || []).join(', '), song.Album || ''].filter(Boolean).join(' · ');
+    const thumb = song.ParentId
+        ? `<img src="${serverUrlInput.value.trim()}/Items/${song.ParentId}/Images/Primary?width=90" alt="" class="song-thumb" loading="lazy">`
+        : `<div class="song-thumb item-placeholder"><i class="fas fa-music"></i></div>`;
+    return `
+        <div class="song-row ${inList ? 'staged' : ''}" data-id="${song.Id}">
+            ${thumb}
+            <span class="song-title">${esc(song.Name)}</span>
+            <span class="song-meta">${esc(meta)}</span>
+            <span class="song-dur">${fmtDur(song.RunTimeTicks)}</span>
+            <button type="button" class="card-btn song-add" title="${inList ? 'Remove song' : 'Add song'}">
+                <i class="fas ${inList ? 'fa-check' : 'fa-plus'}"></i>
+            </button>
+        </div>`;
+}
+
+async function fetchArtistAlbumCount(artistId) {
+    let total = 0;
+    for (const folder of musicFolders()) {
+        const params = new URLSearchParams();
+        params.append('IncludeItemTypes', 'MusicAlbum');
+        params.append('Recursive', 'true');
+        params.append('ArtistIds', artistId);
+        params.append('Limit', '1');
+        if (userId) params.append('UserId', userId);
+        if (folder) params.append('ParentId', folder);
+        const response = await fetch(`${serverUrlInput.value.trim()}/Items?${params}`, {
+            headers: { 'Authorization': authHeader(), 'Accept': 'application/json' }
+        });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        total += (await response.json()).TotalRecordCount || 0;
+    }
+    return total;
+}
+
+function fillArtistCounts() {
+    resultsContainer.querySelectorAll('.artist-count[data-count-for]').forEach(el => {
+        const id = el.dataset.countFor;
+        const cached = artistCounts.get(id);
+        if (cached != null) {
+            el.textContent = `${cached} album${cached === 1 ? '' : 's'}`;
+            return;
+        }
+        fetchArtistAlbumCount(id).then(count => {
+            artistCounts.set(id, count);
+            const fresh = resultsContainer.querySelector(`.artist-count[data-count-for="${id}"]`);
+            if (fresh) fresh.textContent = `${count} album${count === 1 ? '' : 's'}`;
+        }).catch(() => { /* leave count blank on failure */ });
+    });
+}
+
+function albumCardHtml(album) {
+    const art = album.ImageTags && album.ImageTags.Primary
+        ? `<img src="${serverUrlInput.value.trim()}/Items/${album.Id}/Images/Primary?width=300" alt="${esc(album.Name)}" class="album-art" loading="lazy">`
+        : `<div class="album-art item-placeholder"><i class="fas fa-compact-disc fa-2x"></i></div>`;
+    const artist = album.AlbumArtist || (album.Artists || []).join(', ');
+    const metaLine = [album.ProductionYear || '', artist].filter(Boolean).join(' · ');
+
+    return `
+        <div class="album-card" data-id="${album.Id}">
+            <div class="album-head">
+                ${art}
+                <div class="album-meta">
+                    <div class="album-title">${esc(album.Name)}</div>
+                    ${metaLine ? `<div class="album-artist">${esc(metaLine)}</div>` : ''}
+                    ${album.Genres && album.Genres.length ? `<div class="album-genres">${esc(album.Genres.join(', '))}</div>` : ''}
+                    <div class="album-count" data-count-for="${album.Id}"></div>
+                </div>
+            </div>
+            <button type="button" class="btn add-album-btn" data-album="${album.Id}"><i class="fas fa-plus me-1"></i>Add album</button>
+            <div class="tracklist" data-album="${album.Id}"><div class="tr-loading"><span class="spinner-border spinner-border-sm"></span></div></div>
+        </div>`;
+}
+
+function tracklistBox(albumId) {
+    return resultsContainer.querySelector(`.tracklist[data-album="${albumId}"]`);
+}
+
+function observeTracklists() {
+    if (!tracklistObserver) {
+        tracklistObserver = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    tracklistObserver.unobserve(entry.target);
+                    loadAlbumTracks(entry.target.dataset.album);
+                }
+            });
+        }, { rootMargin: '200px' });
+    }
+    resultsContainer.querySelectorAll('.tracklist').forEach(el => {
+        if (albumTracks[el.dataset.album]) paintTracklist(el.dataset.album);
+        else tracklistObserver.observe(el);
+    });
+}
+
+async function loadAlbumTracks(albumId) {
+    if (albumTracks[albumId]) {
+        paintTracklist(albumId);
+        return;
+    }
+    const params = new URLSearchParams();
+    params.append('ParentId', albumId);
+    params.append('IncludeItemTypes', 'Audio');
+    params.append('Recursive', 'true');
+    params.append('SortBy', 'ParentIndexNumber,IndexNumber,SortName');
+    params.append('Limit', '1000');
+    params.append('Fields', 'IndexNumber,ParentIndexNumber,RunTimeTicks,Artists,Album,ImageTags,Name,Type,ParentId');
+    if (userId) params.append('UserId', userId);
+
+    try {
+        albumTracks[albumId] = await fetchItemsJson(params);
+        paintTracklist(albumId);
+        refreshAlbumButton(albumId);
+    } catch (error) {
+        console.error('Error loading album tracks:', error);
+        const box = tracklistBox(albumId);
+        if (box) box.innerHTML = '<div class="tr-loading">Could not load tracks</div>';
+    }
+}
+
+function fmtDur(ticks) {
+    const seconds = Math.round((ticks || 0) / 10000000);
+    if (!seconds) return '';
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function paintTracklist(albumId) {
+    const box = tracklistBox(albumId);
+    const tracks = albumTracks[albumId];
+    if (!box || !tracks) return;
+
+    if (tracks.length === 0) {
+        box.innerHTML = '<div class="tr-loading">No tracks</div>';
+        return;
+    }
+
+    box.innerHTML = tracks.map(track => {
+        const inList = playlist.some(p => p.Id === track.Id);
+        return `
+            <div class="tr-row ${inList ? 'staged' : ''}" data-id="${track.Id}" data-album="${albumId}">
+                <span class="tr-no">${track.IndexNumber != null ? track.IndexNumber : ''}</span>
+                <span class="tr-name">${esc(track.Name)}</span>
+                <span class="tr-dur">${fmtDur(track.RunTimeTicks)}</span>
+                <button type="button" class="card-btn tr-add" title="${inList ? 'Remove song' : 'Add song'}">
+                    <i class="fas ${inList ? 'fa-check' : 'fa-plus'}"></i>
+                </button>
+            </div>`;
+    }).join('');
+
+    const countEl = resultsContainer.querySelector(`[data-count-for="${albumId}"]`);
+    if (countEl) {
+        const totalMinutes = Math.round(tracks.reduce((sum, t) => sum + (t.RunTimeTicks || 0), 0) / 600000000);
+        countEl.textContent = `${tracks.length} track${tracks.length === 1 ? '' : 's'} · ${totalMinutes} min`;
+    }
+}
+
+async function toggleAlbumTracks(albumId) {
+    if (!albumTracks[albumId]) {
+        await loadAlbumTracks(albumId);
+        if (!albumTracks[albumId]) return;
+    }
+    const tracks = albumTracks[albumId];
+    if (tracks.length === 0) return;
+
+    const albumName = (displayedAlbums().find(a => a.Id === albumId) || {}).Name || 'album';
+    if (tracks.every(t => playlist.some(p => p.Id === t.Id))) {
+        const ids = new Set(tracks.map(t => t.Id));
+        playlist = playlist.filter(p => !ids.has(p.Id));
+        showStatusMessage(`Removed ${tracks.length} tracks from "${esc(albumName)}"`, 'info');
+    } else {
+        let added = 0;
+        tracks.forEach(t => {
+            if (!playlist.some(p => p.Id === t.Id)) {
+                playlist.push(t);
+                added++;
+            }
+        });
+        showStatusMessage(`Added ${added} track${added === 1 ? '' : 's'} from "${esc(albumName)}"`, 'success');
+    }
+    renderPlaylist();
+    refreshResultCards();
+}
+
+function refreshAlbumButton(albumId) {
+    const btn = resultsContainer.querySelector(`.add-album-btn[data-album="${albumId}"]`);
+    if (!btn) return;
+    const tracks = albumTracks[albumId];
+    const staged = tracks ? tracks.filter(t => playlist.some(p => p.Id === t.Id)).length : 0;
+
+    if (tracks && tracks.length && staged === tracks.length) {
+        btn.innerHTML = '<i class="fas fa-check me-1"></i>Album added';
+        btn.classList.add('added');
+    } else {
+        btn.classList.remove('added');
+        btn.innerHTML = (tracks && staged > 0)
+            ? `<i class="fas fa-plus me-1"></i>Add ${tracks.length - staged} more`
+            : '<i class="fas fa-plus me-1"></i>Add album';
+    }
 }
 
 function cardHtml(item) {
@@ -665,6 +1268,19 @@ function refreshResultCards() {
         const btn = card.querySelector('.add-btn i');
         if (btn) btn.className = `fas ${inList ? 'fa-check' : 'fa-plus'}`;
     });
+    resultsContainer.querySelectorAll('.tr-row').forEach(row => {
+        const inList = playlist.some(p => p.Id === row.dataset.id);
+        row.classList.toggle('staged', inList);
+        const icon = row.querySelector('.tr-add i');
+        if (icon) icon.className = `fas ${inList ? 'fa-check' : 'fa-plus'}`;
+    });
+    resultsContainer.querySelectorAll('.song-row').forEach(row => {
+        const inList = playlist.some(p => p.Id === row.dataset.id);
+        row.classList.toggle('staged', inList);
+        const icon = row.querySelector('.song-add i');
+        if (icon) icon.className = `fas ${inList ? 'fa-check' : 'fa-plus'}`;
+    });
+    resultsContainer.querySelectorAll('.add-album-btn').forEach(btn => refreshAlbumButton(btn.dataset.album));
 }
 
 // ---------- Playlist ----------
@@ -673,6 +1289,11 @@ function togglePlaylist(item) {
     if (idx >= 0) {
         playlist.splice(idx, 1);
     } else {
+        if (item.Type === 'Audio') {
+            const parentAlbum = displayedAlbums().find(a => a.Id === item.ParentId) || musicAlbums.find(a => a.Id === item.ParentId);
+            item._album = item.Album || (parentAlbum && parentAlbum.Name) || '';
+            item._artist = (item.Artists && item.Artists[0]) || '';
+        }
         playlist.push(item);
     }
     renderPlaylist();
@@ -687,19 +1308,31 @@ function renderPlaylist() {
     clearPlaylistBtn.disabled = n === 0;
 
     if (n === 0) {
+        const hint = isMusicMode() ? 'add songs from the album cards' : 'add titles from the results';
         playlistContainer.innerHTML = `
             <div class="text-center py-4 text-muted">
-                <i class="fas fa-list fa-2x mb-2"></i>
-                <p class="mb-0">Your playlist is empty — add titles from the results</p>
+                <i class="fas ${isMusicMode() ? 'fa-music' : 'fa-list'} fa-2x mb-2"></i>
+                <p class="mb-0">Your playlist is empty — ${hint}</p>
             </div>`;
         return;
     }
 
     playlistContainer.innerHTML = playlist.map((item, idx) => {
-        const thumb = item.ImageTags && item.ImageTags.Primary
-            ? `<img src="${serverUrlInput.value.trim()}/Items/${item.Id}/Images/Primary?width=90" alt="" class="pl-thumb" loading="lazy">`
-            : `<div class="pl-thumb pl-placeholder"><i class="fas fa-film"></i></div>`;
-        const sub = [item.ProductionYear || '', typeLabel(item), libraryName(item)].filter(Boolean).join(' · ');
+        const music = item.Type === 'Audio';
+        const thumbSrc = music && item.ParentId
+            ? `${serverUrlInput.value.trim()}/Items/${item.ParentId}/Images/Primary?width=90`
+            : (item.ImageTags && item.ImageTags.Primary
+                ? `${serverUrlInput.value.trim()}/Items/${item.Id}/Images/Primary?width=90`
+                : '');
+        const thumb = thumbSrc
+            ? `<img src="${thumbSrc}" alt="" class="pl-thumb ${music ? 'pl-thumb-music' : ''}" loading="lazy">`
+            : `<div class="pl-thumb ${music ? 'pl-thumb-music' : ''} pl-placeholder"><i class="fas ${music ? 'fa-music' : 'fa-film'}"></i></div>`;
+        const sub = music
+            ? [item._artist || (item.Artists || [])[0] || '', item._album || item.Album || ''].filter(Boolean).join(' · ')
+            : [item.ProductionYear || '', typeLabel(item), libraryName(item)].filter(Boolean).join(' · ');
+        const detailBtn = music
+            ? ''
+            : `<button type="button" class="pl-tool pl-detail" title="Details"><i class="fas fa-circle-info"></i></button>`;
         return `
             <div class="pl-row" data-id="${item.Id}">
                 ${thumb}
@@ -708,7 +1341,7 @@ function renderPlaylist() {
                     <div class="pl-sub">${esc(sub)}</div>
                 </div>
                 <div class="pl-tools">
-                    <button type="button" class="pl-tool pl-detail" title="Details"><i class="fas fa-circle-info"></i></button>
+                    ${detailBtn}
                     <button type="button" class="pl-tool pl-up" title="Move up" ${idx === 0 ? 'disabled' : ''}><i class="fas fa-arrow-up"></i></button>
                     <button type="button" class="pl-tool pl-down" title="Move down" ${idx === n - 1 ? 'disabled' : ''}><i class="fas fa-arrow-down"></i></button>
                     <button type="button" class="pl-tool pl-remove" title="Remove"><i class="fas fa-xmark"></i></button>
@@ -726,6 +1359,14 @@ function sortPlaylist(mode) {
             break;
         case 'alphabeticalDesc':
             playlist.sort((a, b) => (b.Name || '').localeCompare(a.Name || ''));
+            break;
+        case 'album':
+            playlist.sort((a, b) => {
+                const byAlbum = (a._album || a.Album || '').localeCompare(b._album || b.Album || '');
+                if (byAlbum !== 0) return byAlbum;
+                return (a.ParentIndexNumber || 0) - (b.ParentIndexNumber || 0)
+                    || (a.IndexNumber || 0) - (b.IndexNumber || 0);
+            });
             break;
         case 'releaseDate':
             playlist.sort((a, b) => (b.ProductionYear || 0) - (a.ProductionYear || 0));
@@ -766,13 +1407,14 @@ async function savePlaylist() {
     savePlaylistBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving...';
 
     try {
+        const ids = playlist.map(item => item.Id);
         const playlistData = {
             Name: name,
             UserId: userId,
             Users: [{ UserId: userId, CanEdit: true }],
             IsPublic: isPublicCheckbox.checked,
-            MediaType: mediaTypeSelect.value,
-            Ids: playlist.map(item => item.Id)
+            MediaType: isMusicMode() ? 'audio' : 'video',
+            Ids: ids.slice(0, 1000)
         };
 
         const response = await fetch(`${serverUrlInput.value.trim()}/Playlists`, {
@@ -787,7 +1429,19 @@ async function savePlaylist() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
         const result = await response.json();
-        showStatusMessage(`Playlist "${esc(name)}" created on your server (${result.Id})`, 'success');
+
+        // Music playlists can exceed the 1000-id create cap; append the rest.
+        for (let i = 1000; i < ids.length; i += 1000) {
+            const chunk = ids.slice(i, i + 1000);
+            const appendUrl = `${serverUrlInput.value.trim()}/Playlists/${result.Id}/Items?userId=${userId}&ids=${encodeURIComponent(chunk.join(','))}`;
+            const appendResponse = await fetch(appendUrl, {
+                method: 'POST',
+                headers: { 'Authorization': authHeader(), 'Accept': 'application/json' }
+            });
+            if (!appendResponse.ok) throw new Error(`Playlist created but appending items ${i + 1}-${i + chunk.length} failed (HTTP ${appendResponse.status})`);
+        }
+
+        showStatusMessage(`Playlist "${esc(name)}" created on your server (${ids.length} item${ids.length === 1 ? '' : 's'})`, 'success');
     } catch (error) {
         console.error('Error saving playlist:', error);
         showStatusMessage(`Error creating playlist: ${error.message}`, 'danger');
@@ -836,7 +1490,7 @@ function showItemDetails(item) {
 const TOUR_STEPS = [
     { text: 'Enter your Jellyfin server address & API key', targets: ['#serverUrl', '#apiKey'] },
     { text: 'Select the user who will own the playlist', targets: ['#userSelect'] },
-    { text: 'Pick the media types you want, then type a search phrase', targets: ['.type-chips', '.search-main'] },
+    { text: 'Pick Movies / TV, or switch to Music — then type a search phrase', targets: ['.type-chips', '.search-main'] },
     { text: 'Hit Search — matching titles appear in this pane', targets: ['#searchBtn', '#resultsContainer'] },
     { text: 'Refine What You See — dial in years, rating, genres, studios', targets: ['#refineBtn', '#refinePopover'] },
     { text: 'Click the + on any card — it lands in your playlist over here', targets: ['.playlist-pane'] },
