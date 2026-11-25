@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DirtFlix Playlist Generator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container-fluid py-4">
+        <header class="page-header">
+            <div class="brand">
+                <h1><i class="fas fa-film me-2"></i>DirtFlix Playlist Generator</h1>
+                <p class="lead mb-0">Search your library, stage nothing — just add and save</p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" id="tourBtn" class="help-link tour-cta"><i class="fas fa-wand-magic-sparkles me-2"></i>Show Me</button>
+                <a href="#" id="helpModalTrigger" class="help-link"><i class="fas fa-circle-question me-2"></i>How does this work?</a>
+                <button id="themeToggle" class="theme-btn" title="Toggle theme">
+                    <i class="fas fa-moon"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Guided tour banner -->
+        <section id="tourBanner" hidden>
+            <div class="tour-body">
+                <span class="tour-step" id="tourStep">1/7</span>
+                <p id="tourText"></p>
+            </div>
+            <div class="tour-nav">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="tourPrev">Back</button>
+                <button type="button" class="btn btn-sm btn-info" id="tourNext">Next</button>
+                <button type="button" class="btn btn-sm btn-link tour-skip" id="tourSkip">Skip</button>
+            </div>
+        </section>
+
+        <!-- Status messages -->
+        <div class="mb-3" id="statusMessages"></div>
+
+        <!-- Connection bar -->
+        <section class="card connect-bar mb-3">
+            <div class="card-body d-flex flex-wrap align-items-end gap-3">
+                <div class="conn-field">
+                    <label class="form-label" for="serverUrl">Server URL</label>
+                    <input type="text" class="form-control" id="serverUrl" placeholder="http://192.168.1.200:8096">
+                </div>
+                <div class="conn-field">
+                    <label class="form-label" for="apiKey">API Key</label>
+                    <input type="password" class="form-control" id="apiKey" placeholder="Jellyfin API key">
+                </div>
+                <div class="conn-field">
+                    <label class="form-label" for="userSelect">Owner</label>
+                    <select class="form-select" id="userSelect">
+                        <option value="">Select a user...</option>
+                    </select>
+                </div>
+                <div class="conn-field conn-remember">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="rememberLogin">
+                        <label class="form-check-label" for="rememberLogin">Remember login</label>
+                    </div>
+                    <small class="text-muted">Saves URL + key in this browser</small>
+                </div>
+            </div>
+        </section>
+
+        <!-- Search bar -->
+        <section class="search-bar card mb-3">
+            <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                <div class="search-main">
+                    <i class="fas fa-magnifying-glass"></i>
+                    <input type="text" id="searchInput" placeholder="Search titles — press Enter">
+                </div>
+                <div class="type-chips" role="group" aria-label="Item types">
+                    <button type="button" class="chip active" id="chipMovie" data-type="Movie"><i class="fas fa-film me-1"></i>Movies</button>
+                    <button type="button" class="chip active" id="chipTv" data-type="Series"><i class="fas fa-tv me-1"></i>TV</button>
+                    <button type="button" class="chip" id="chipMusic" data-type="Audio"><i class="fas fa-music me-1"></i>Music</button>
+                </div>
+                <button type="button" class="btn btn-outline-secondary" id="refineBtn">
+                    <i class="fas fa-sliders me-2"></i>Refine
+                    <span class="badge refine-badge" id="refineBadge" hidden>0</span>
+                </button>
+                <button type="button" class="btn btn-primary" id="searchBtn">
+                    <i class="fas fa-search me-2"></i>Search
+                </button>
+            </div>
+        </section>
+
+        <!-- Refine popover -->
+        <div class="refine-popover card" id="refinePopover" hidden>
+            <div class="refine-grid">
+                <div class="refine-block">
+                    <label class="form-label">Years</label>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="number" class="form-control" id="yearFrom" placeholder="1900" min="1900">
+                        <span class="text-muted">to</span>
+                        <input type="number" class="form-control" id="yearTo" placeholder="2030" min="1900">
+                    </div>
+                </div>
+                <div class="refine-block">
+                    <label class="form-label" for="ratingFilter">Min community rating: <span id="ratingValue">0</span></label>
+                    <input type="range" class="form-range" id="ratingFilter" min="0" max="10" step="0.5" value="0">
+                </div>
+                <div class="refine-block">
+                    <label class="form-label">Genres</label>
+                    <input type="text" class="form-control form-control-sm mb-2" id="genreSearch" placeholder="Type to filter genres...">
+                    <div class="check-list" id="genreList"></div>
+                </div>
+                <div class="refine-block">
+                    <label class="form-label">Studios</label>
+                    <input type="text" class="form-control form-control-sm mb-2" id="studioSearch" placeholder="Type to filter studios...">
+                    <div class="check-list" id="studioList"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Workspace: results + playlist -->
+        <div class="workspace">
+            <div class="pane-tabs">
+                <button type="button" class="pane-tab active" id="tabResultsBtn">
+                    <i class="fas fa-magnifying-glass me-2"></i>Results
+                </button>
+                <button type="button" class="pane-tab" id="tabPlaylistBtn">
+                    <i class="fas fa-list me-2"></i>Playlist (<span id="tabPlaylistCount">0</span>)
+                </button>
+            </div>
+
+            <section id="resultsPane" class="pane">
+                <div class="pane-toolbar">
+                    <span id="resultsCount" class="text-muted">Search to see results</span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="addAllBtn" disabled>
+                        <i class="fas fa-plus-double me-1"></i>Add all shown
+                    </button>
+                </div>
+                <div id="resultsContainer"></div>
+            </section>
+
+            <aside id="playlistPane" class="pane playlist-pane card">
+                <div class="pl-head">
+                    <h5 class="mb-0"><i class="fas fa-list me-2"></i>My Playlist <span class="badge" id="playlistCount">0</span></h5>
+                    <div class="d-flex gap-2">
+                        <select class="form-select form-select-sm" id="playlistSort">
+                            <option value="none">Manual order</option>
+                            <option value="alphabetical">A-Z</option>
+                            <option value="alphabeticalDesc">Z-A</option>
+                            <option value="releaseDate">Newest first</option>
+                            <option value="oldest">Oldest first</option>
+                            <option value="rating">Top rated</option>
+                            <option value="random">Shuffle</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="clearPlaylistBtn" title="Clear playlist">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="pl-list" id="playlistContainer"></div>
+                <div class="pl-form">
+                    <input type="text" class="form-control mb-2" id="playlistName" placeholder="Playlist name">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <div class="form-check m-0">
+                            <input class="form-check-input" type="checkbox" id="isPublicCheckbox" checked>
+                            <label class="form-check-label" for="isPublicCheckbox">Public</label>
+                        </div>
+                        <select class="form-select form-select-sm" id="mediaTypeSelect" style="max-width: 120px;">
+                            <option value="Video">Video</option>
+                        </select>
+                    </div>
+                    <button type="button" class="btn btn-info w-100" id="savePlaylistBtn" disabled>
+                        <i class="fas fa-save me-2"></i>Save Playlist to Jellyfin
+                    </button>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Item Detail Modal -->
+    <div class="modal fade" id="itemDetailModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-film me-2"></i>Title Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <img id="detailImage" src="" alt="Item image" class="img-fluid">
+                        </div>
+                        <div class="col-md-8">
+                            <h4 id="detailTitle" class="mb-2"></h4>
+                            <p class="mb-1"><strong>Type:</strong> <span id="detailType"></span></p>
+                            <p class="mb-1"><strong>Studio:</strong> <span id="detailStudio"></span></p>
+                            <p class="mb-1"><strong>Year:</strong> <span id="detailYear"></span></p>
+                            <p class="mb-1"><strong>Community Rating:</strong> <span id="detailCommunityRating">N/A</span></p>
+                            <p class="mb-1"><strong>Critic Rating:</strong> <span id="detailCriticRating">N/A</span></p>
+                            <div id="taglineSection" class="mb-2" style="display: none;">
+                                <p class="mb-1"><strong>Tagline:</strong> <em id="detailTagline"></em></p>
+                            </div>
+                            <div class="mt-3">
+                                <strong>Overview:</strong>
+                                <p id="detailOverview" class="mt-1"></p>
+        </div>
+
+        <!-- What's new showcase -->
+        <section class="card showcase mt-4">
+            <div class="card-header ch-filter">
+                <h5 class="mb-0"><i class="fas fa-sparkles me-2"></i>New &amp; Improved</h5>
+            </div>
+            <div class="card-body showcase-grid">
+                <figure class="m-0">
+                    <img src="new_and_improved.jpg" alt="DirtFlix Playlist Generator interface" loading="lazy">
+                    <figcaption class="text-muted small">The new two-pane interface</figcaption>
+                </figure>
+                <figure class="m-0">
+                    <video src="new_and_improved.mp4" controls preload="metadata" poster="new_and_improved.jpg"></video>
+                    <figcaption class="text-muted small">Demo walkthrough</figcaption>
+                </figure>
+            </div>
+        </section>
+    </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div class="modal fade" id="helpModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-circle-question me-2"></i>How to build a playlist</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <ol class="help-steps">
+                        <li><strong>Connect.</strong> Enter your Jellyfin server URL and an API key (Dashboard → API Keys). Users load automatically; pick the playlist <em>Owner</em>. Tick <em>Remember login</em> to keep the URL, key, and owner in this browser (untick to forget).</li>
+                        <li><strong>Pick media types</strong> with the Movies / TV / Music chips.</li>
+                        <li><strong>Search</strong> any term and press Enter — matching titles appear in the Results pane. Use <em>Refine</em> to narrow by year, rating, genre or studio.</li>
+                        <li><strong>Add to the playlist</strong> by clicking <i class="fas fa-plus"></i> on a card (it becomes <i class="fas fa-check"></i>). Hover <i class="fas fa-circle-info"></i> to see details. Results are disposable — keep searching and adding; the playlist on the right accumulates.</li>
+                        <li><strong>Arrange</strong> the playlist rows with ↑ ↓, or sort/reorder them, and remove with ✕.</li>
+                        <li><strong>Save</strong> gives the playlist a name and creates it on your Jellyfin server. The playlist itself is never stored locally — it is lost on refresh.</li>
+                    </ol>
+                    <p class="text-muted small mb-0">API keys live only in the page for this session — never commit real keys to source control.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
