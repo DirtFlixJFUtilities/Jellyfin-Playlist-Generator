@@ -10,7 +10,7 @@ Standalone static web app (open `index.html` directly) that searches a Jellyfin 
 
 - **v2.0 published and complete. v2.1 music playlist support: BUILT and browser-tested by the user against .200** (searches, album cards, drill-in, songs section, filters — all confirmed working). Changes are committed to `main`; the zip/release for v2.1 are NOT yet made.
 - **App works against both Jellyfin servers on the LAN**: `192.168.1.200:8096` (DirtFlix 2.0, **12.4.0** — the one in use, has a Music library) and `192.168.1.10:8096` (DS923-NAS, 10.10.7, not probed for music).
-- **Git**: folder is a git repo (`main`), pushed with `-f` to `https://github.com/DirtFlixJFUtilities/Jellyfin-Playlist-Generator` — remote mirrors the folder. Committer identity is set **locally only**.
+- **Git**: local `main` = `99f4dd9` + `4106146` (v2.1 music work incl. README merge of the user's GitHub web edits) + `3cf57f9` (playlist art fallback) — **NOT pushed** (user paused publishing 2026-11-25). The remote diverged: GitHub gained two web-UI "Update README.md" commits (`7b14776`, `54d10d5`) adding the "New and improved…" sentence in Overview plus `user-attachments` screenshot/video links — the local README already contains all of that, so a future `git rebase origin/main` conflict resolves by taking the local README (`--theirs` during rebase). Committer identity is set **locally only**.
 
 ## Probe findings (2026-11-25, against .200 / 12.4.0)
 
