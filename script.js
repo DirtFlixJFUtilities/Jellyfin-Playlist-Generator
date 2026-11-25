@@ -351,6 +351,17 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }, true);
 
+    // Playlist rail thumbnails 404 the same way (album without Primary image)
+    playlistContainer.addEventListener('error', e => {
+        if (e.target.matches && e.target.matches('img.pl-thumb')) {
+            const music = e.target.classList.contains('pl-thumb-music');
+            const placeholder = document.createElement('div');
+            placeholder.className = `pl-thumb ${music ? 'pl-thumb-music' : ''} pl-placeholder`;
+            placeholder.innerHTML = `<i class="fas ${music ? 'fa-music' : 'fa-film'}"></i>`;
+            e.target.replaceWith(placeholder);
+        }
+    }, true);
+
     addAllBtn.addEventListener('click', () => {
         let added = 0;
         results.forEach(item => {
