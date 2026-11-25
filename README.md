@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Dirtflix Playlist Generator is a standalone web app for building playlists on a Jellyfin media server. Search a term, browse the results grid, click titles into the right-hand "My Playlist" rail, then save the playlist directly on the server via the Jellyfin REST API. Works with Jellyfin 10.x and 12.x.
+The Dirtflix Playlist Generator is a standalone web app for building playlists on a Jellyfin media server. Search a term, browse the results grid, click titles into the right-hand "My Playlist" rail, then save the playlist directly on the server via the Jellyfin REST API. Works with Jellyfin 10.x and 12.x. New and improved. All new drastically improved interface and logic, same old unzip and run. Nothing to install.
 
 https://github.com/user-attachments/assets/618b42f1-a6b1-435e-a9cf-eb6a4199f76e
 
